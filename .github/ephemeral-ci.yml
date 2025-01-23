@@ -1,0 +1,57 @@
+name: Ephemeral Security Testing
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  ephemeral-security-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out repo
+      uses: actions/checkout@v2
+
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v2
+
+    - name: Terraform Init
+      working-directory: ./terraform
+      run: terraform init
+
+    - name: Terraform Plan
+      working-directory: ./terraform
+      run: terraform plan -out=tfplan
+
+    - name: Terraform Apply
+      working-directory: ./terraform
+      run: terraform apply -auto-approve tfplan
+
+    - name: Extract ALB DNS
+      id: alb_output
+      working-directory: ./terraform
+      run: |
+        echo "alb_dns=$(terraform output -raw alb_dns_name)" >> $GITHUB_OUTPUT
+
+    - name: Wait for service
+      run: |
+        echo "Waiting for the app to be available..."
+        sleep 60
+
+    - name: Run ZAP Security Scan
+      run: |
+        chmod +x scripts/zap-scan.sh
+        ./scripts/zap-scan.sh "http://${{ steps.alb_output.outputs.alb_dns }}/"
+
+    - name: Archive ZAP Report
+      uses: actions/upload-artifact@v2
+      with:
+        name: zap_report
+        path: zap_report.html
+
+    - name: Terraform Destroy
+      if: always()
+      working-directory: ./terraform
+      run: terraform destroy -auto-approve
